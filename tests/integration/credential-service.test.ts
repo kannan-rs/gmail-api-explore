@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Database } from '../../src/db/client';
 import { UnauthorizedError } from '../../src/domain/errors';
 import { GmailOAuthService } from '../../src/providers/gmail/oauth';
@@ -33,6 +33,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await resetTestDatabase();
+  vi.restoreAllMocks();
 });
 
 afterAll(async () => {
@@ -89,5 +90,58 @@ describe('CredentialService', () => {
     await expect(
       service.getConnectionForMailbox('00000000-0000-4000-8000-000000000000'),
     ).rejects.toThrow(/mailbox not found/i);
+  });
+
+  it('bootstraps a connection from an environment refresh token', async () => {
+    vi.spyOn(oauth, 'getProfileWithRefreshToken').mockResolvedValue({
+      email: 'auto@example.com',
+      name: 'Auto',
+    });
+
+    const saved = await service.ensureConnectionFromRefreshToken('env-refresh-token');
+
+    expect(saved.mailbox.email).toBe('auto@example.com');
+    expect(saved.auth.credentials.refresh_token).toBe('env-refresh-token');
+
+    const active = await service.getActiveConnection();
+    expect(active.mailbox.email).toBe('auto@example.com');
+  });
+
+  it('replaces an existing connection when the environment token belongs to another mailbox', async () => {
+    await service.saveConnection({
+      profile: { email: 'owner@example.com', name: null },
+      refreshToken: 'old-token',
+      scopes: ['gmail.send'],
+      tokenType: 'Bearer',
+    });
+    vi.spyOn(oauth, 'getProfileWithRefreshToken').mockResolvedValue({
+      email: 'auto@example.com',
+      name: null,
+    });
+
+    const saved = await service.ensureConnectionFromRefreshToken('new-token');
+
+    expect(saved.mailbox.email).toBe('auto@example.com');
+    expect(saved.auth.credentials.refresh_token).toBe('new-token');
+  });
+
+  it('keeps the existing connection when the environment token is invalid', async () => {
+    await service.saveConnection({
+      profile: { email: 'owner@example.com', name: null },
+      refreshToken: 'existing-token',
+      scopes: ['gmail.send'],
+      tokenType: 'Bearer',
+    });
+    vi.spyOn(oauth, 'getProfileWithRefreshToken').mockRejectedValue(
+      new UnauthorizedError('invalid environment token'),
+    );
+
+    await expect(service.ensureConnectionFromRefreshToken('bad-token')).rejects.toBeInstanceOf(
+      UnauthorizedError,
+    );
+
+    const active = await service.getActiveConnection();
+    expect(active.mailbox.email).toBe('owner@example.com');
+    expect(active.auth.credentials.refresh_token).toBe('existing-token');
   });
 });

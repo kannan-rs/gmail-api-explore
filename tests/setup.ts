@@ -15,10 +15,12 @@ if (!live) {
   process.env.MAX_ATTACHMENTS = '10';
   process.env.GOOGLE_CLIENT_ID = '';
   process.env.GOOGLE_CLIENT_SECRET = '';
+  process.env.GOOGLE_REFRESH_TOKEN = '';
   process.env.TRACKING_ENABLED = 'true';
   process.env.TRACKING_PIXEL_ENABLED = 'true';
   process.env.TRACKING_ACK_ENABLED = 'true';
   process.env.READ_RECEIPT_REQUESTED = 'true';
   process.env.TRACKING_WEBHOOK_SECRET = '';
   process.env.TRACKING_SYNC_DAYS = '7';
+  process.env.TRACKING_SYNC_INTERVAL_MINUTES = '0';
 }

@@ -1,11 +1,11 @@
-import { normalizeMessageId } from '../../domain/tracking';
+import { type BounceType, classifyBounceText, normalizeMessageId } from '../../domain/tracking';
 import type {
   ProviderTrackingEvent,
   TrackingCollectInput,
   TrackingProvider,
   TrackingSendRef,
 } from '../tracking-provider';
-import type { GmailApi, GmailMessageMetadata, GmailMessageRef } from './gmail-api';
+import type { GmailApi, GmailMessageMetadata } from './gmail-api';
 
 function header(metadata: GmailMessageMetadata, name: string): string {
   return metadata.headers[name.toLowerCase()] ?? '';
@@ -68,7 +68,7 @@ function matchReadReceipt(
   sends: TrackingSendRef[],
 ): TrackingSendRef | null {
   const subject = lower(header(metadata, 'subject'))
-    .replace(/^read:\s*/, '')
+    .replace(/^(?:read(?:\s+receipt)?|read-receipt|receipt)\s*:\s*/, '')
     .trim();
   const from = lower(header(metadata, 'from'));
   if (subject.length === 0) {
@@ -112,9 +112,19 @@ export function looksLikeReadReceipt(metadata: GmailMessageMetadata): boolean {
   );
 }
 
+export function classifyDsn(metadata: GmailMessageMetadata): BounceType {
+  const subject = header(metadata, 'subject');
+  const contentType = header(metadata, 'content-type');
+  const classification = classifyBounceText(`${subject} ${contentType}`);
+  if (classification !== 'unknown') {
+    return classification;
+  }
+  return header(metadata, 'x-failed-recipients').length > 0 ? 'hard' : 'unknown';
+}
+
 function bounceEvent(metadata: GmailMessageMetadata, send: TrackingSendRef): ProviderTrackingEvent {
   const subject = header(metadata, 'subject');
-  const delayed = lower(subject).includes('delay') || lower(subject).includes('delayed');
+  const bounceType = classifyDsn(metadata);
   const failedRecipients = header(metadata, 'x-failed-recipients')
     .split(',')
     .map((value) => value.trim())
@@ -123,17 +133,17 @@ function bounceEvent(metadata: GmailMessageMetadata, send: TrackingSendRef): Pro
   return {
     sendId: send.id,
     trackingId: send.trackingId,
-    eventType: delayed ? 'DEFERRED' : 'BOUNCED',
+    eventType: bounceType === 'soft' ? 'DEFERRED' : 'BOUNCED',
     source: 'gmail_dsn',
     providerEventId: metadata.id,
     occurredAt: parseHeaderDate(header(metadata, 'date')),
     payload: {
-      bounceType: delayed ? 'soft' : 'unknown',
+      bounceType,
       failedRecipients,
       subject,
       from: header(metadata, 'from'),
       gmailMessageId: metadata.id,
-      note: 'Gmail metadata sync cannot read the DSN body; open the Gmail message for SMTP status details.',
+      note: 'Gmail metadata sync classifies from DSN headers/subject because it cannot read the DSN body or SMTP status.',
     },
   };
 }
@@ -199,21 +209,15 @@ export class GmailTrackingProvider implements TrackingProvider {
   async collectEvents(input: TrackingCollectInput): Promise<ProviderTrackingEvent[]> {
     const events: ProviderTrackingEvent[] = [];
     const days = Math.max(1, Math.min(30, input.days));
-    const queries = [
-      `in:inbox newer_than:${days}d (from:mailer-daemon OR from:postmaster OR subject:"Delivery Status Notification" OR subject:"Mail Delivery Failed" OR subject:"Undelivered Mail Returned to Sender" OR subject:"Delayed Mail")`,
-      `in:inbox newer_than:${days}d (subject:"Read:" OR subject:"Read receipt")`,
-    ];
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    const page = await this.api.listMessagesByLabel(['INBOX'], 500);
 
-    const refs = new Map<string, GmailMessageRef>();
-    for (const query of queries) {
-      const found = await this.api.listMessages(query, 50);
-      for (const ref of found) {
-        refs.set(ref.id, ref);
-      }
-    }
-
-    for (const ref of refs.values()) {
+    for (const ref of page.messages) {
       const metadata = await this.api.getMessageMetadata(ref.id);
+      const occurredAt = parseHeaderDate(header(metadata, 'date'));
+      if (occurredAt.getTime() < cutoff) {
+        break;
+      }
       const bounce = looksLikeBounce(metadata);
       const receipt = looksLikeReadReceipt(metadata);
       const send =

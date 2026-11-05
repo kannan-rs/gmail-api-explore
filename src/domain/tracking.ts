@@ -19,6 +19,89 @@ export type TrackingSource =
   | 'webhook'
   | 'manual';
 
+export type BounceType = 'hard' | 'soft' | 'unknown';
+
+const HARD_BOUNCE_SIGNALS = [
+  'permanent',
+  'undeliverable',
+  'undelivered',
+  'returned to sender',
+  'failure',
+  'failed',
+  'mail delivery failed',
+  'address not found',
+  'does not exist',
+  'user unknown',
+  'rejected',
+  'blocked',
+  '5.1.1',
+  '550',
+];
+
+const SOFT_BOUNCE_SIGNALS = [
+  'delay',
+  'delayed',
+  'temporary',
+  'temporarily',
+  'deferred',
+  'retrying',
+  'will retry',
+  'try again',
+  'mailbox full',
+  'quota exceeded',
+  '4.2.2',
+  '450',
+  '452',
+];
+
+export function normalizeBounceType(value: unknown): BounceType {
+  if (typeof value !== 'string') {
+    return 'unknown';
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'hard' || normalized === 'soft' ? normalized : 'unknown';
+}
+
+export function inferBounceTypeFromStatus(value: unknown): BounceType | null {
+  const text = typeof value === 'number' ? String(value) : value;
+  if (typeof text !== 'string') {
+    return null;
+  }
+  const trimmed = text.trim();
+  if (/^5(?:\.\d+){1,2}$/.test(trimmed) || /^5\d{2}$/.test(trimmed)) {
+    return 'hard';
+  }
+  if (/^4(?:\.\d+){1,2}$/.test(trimmed) || /^4\d{2}$/.test(trimmed)) {
+    return 'soft';
+  }
+  return null;
+}
+
+export function resolveBounceType(payload: Record<string, unknown>): BounceType {
+  const explicit = normalizeBounceType(payload.bounceType);
+  if (explicit !== 'unknown') {
+    return explicit;
+  }
+  for (const key of ['smtpStatus', 'status', 'statusCode', 'diagnosticCode']) {
+    const inferred = inferBounceTypeFromStatus(payload[key]);
+    if (inferred) {
+      return inferred;
+    }
+  }
+  return 'unknown';
+}
+
+export function classifyBounceText(text: string): BounceType {
+  const normalized = text.toLowerCase();
+  if (SOFT_BOUNCE_SIGNALS.some((signal) => normalized.includes(signal))) {
+    return 'soft';
+  }
+  if (HARD_BOUNCE_SIGNALS.some((signal) => normalized.includes(signal))) {
+    return 'hard';
+  }
+  return 'unknown';
+}
+
 export interface TrackingLinks {
   openUrl: string | null;
   acknowledgeUrl: string | null;

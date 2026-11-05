@@ -35,6 +35,9 @@ const CSV_COLUMNS: CsvColumn[] = [
   { key: 'deliveredAt', header: 'delivered_at' },
   { key: 'bouncedAt', header: 'bounced_at' },
   { key: 'bounceType', header: 'bounce_type' },
+  { key: 'deferredAt', header: 'deferred_at' },
+  { key: 'lastDeferredAt', header: 'last_deferred_at' },
+  { key: 'deferredCount', header: 'deferred_count' },
   { key: 'openedAt', header: 'opened_at' },
   { key: 'lastOpenedAt', header: 'last_opened_at' },
   { key: 'openCount', header: 'open_count' },
@@ -64,6 +67,8 @@ function exportValue(send: EmailSendRow, key: string): unknown {
     key === 'verifiedAt' ||
     key === 'deliveredAt' ||
     key === 'bouncedAt' ||
+    key === 'deferredAt' ||
+    key === 'lastDeferredAt' ||
     key === 'openedAt' ||
     key === 'lastOpenedAt' ||
     key === 'readAt' ||

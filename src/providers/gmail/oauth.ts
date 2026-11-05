@@ -71,19 +71,19 @@ export class GmailOAuthService {
         throw new UnauthorizedError('Google did not return an access token. Reconnect Gmail.');
       }
 
-      const oauth2 = google.oauth2({ version: 'v2', auth: client });
-      const { data } = await oauth2.userinfo.get();
-      if (!data.email) {
-        throw new UnauthorizedError('Google did not return an email address. Reconnect Gmail.');
-      }
-
       return {
         tokens,
-        profile: {
-          email: data.email.toLowerCase(),
-          name: data.name ?? null,
-        },
+        profile: await this.fetchProfile(client),
       };
+    } catch (error) {
+      throw mapOAuthError(error);
+    }
+  }
+
+  async getProfileWithRefreshToken(refreshToken: string): Promise<GoogleProfile> {
+    const client = this.createClientWithRefreshToken(refreshToken);
+    try {
+      return await this.fetchProfile(client);
     } catch (error) {
       throw mapOAuthError(error);
     }
@@ -105,5 +105,18 @@ export class GmailOAuthService {
     } catch (error) {
       throw mapOAuthError(error);
     }
+  }
+
+  private async fetchProfile(client: OAuth2Client): Promise<GoogleProfile> {
+    const oauth2 = google.oauth2({ version: 'v2', auth: client });
+    const { data } = await oauth2.userinfo.get();
+    if (!data.email) {
+      throw new UnauthorizedError('Google did not return an email address. Reconnect Gmail.');
+    }
+
+    return {
+      email: data.email.toLowerCase(),
+      name: data.name ?? null,
+    };
   }
 }

@@ -119,14 +119,18 @@ export function App() {
           </div>
 
           {connected ? (
-            <button
-              className="button"
-              type="button"
-              onClick={() => void handleDisconnect()}
-              disabled={disconnecting}
-            >
-              {disconnecting ? 'Disconnecting…' : 'Disconnect'}
-            </button>
+            me?.autoConnect ? (
+              <span className="muted small">Auto-connected from GOOGLE_REFRESH_TOKEN</span>
+            ) : (
+              <button
+                className="button"
+                type="button"
+                onClick={() => void handleDisconnect()}
+                disabled={disconnecting}
+              >
+                {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+              </button>
+            )
           ) : me?.configured ? (
             <a className="button primary" href="/api/auth/google">
               Connect Gmail

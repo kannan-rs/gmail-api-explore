@@ -28,6 +28,7 @@
     "web/src/**/*.tsx",
     "tests/**/*.ts",
     "tests/**/*.tsx",
+    "scripts/**/*.ts",
     "*.config.ts",
     "drizzle.config.ts"
   ],

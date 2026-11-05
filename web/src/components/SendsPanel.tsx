@@ -146,6 +146,10 @@ export function SendsPanel({ clients, refreshKey, onChanged }: SendsPanelProps) 
         <div>
           <h2 id="sends-title">Sends</h2>
           <p className="muted">Every Gmail send attempt, its Gmail IDs, and its audit state.</p>
+          <p className="muted small">
+            Bounces arrive as Gmail DSNs after the send; click Sync Gmail to import them. If the
+            bounce just occurred, sync again after a minute.
+          </p>
         </div>
         <div className="heading-actions">
           <button

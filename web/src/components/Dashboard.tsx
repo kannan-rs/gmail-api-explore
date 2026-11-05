@@ -109,6 +109,9 @@ export function Dashboard({ clients, refreshKey, onChanged }: DashboardProps) {
         <div>
           <h2 id="dashboard-title">Dashboard</h2>
           <p className="muted">Counts are derived from the send ledger, not a separate counter.</p>
+          <p className="muted small">
+            Bounce counts update after Sync tracking imports the Gmail DSN from the inbox.
+          </p>
         </div>
         <div className="heading-actions">
           <button
@@ -192,7 +195,22 @@ export function Dashboard({ clients, refreshKey, onChanged }: DashboardProps) {
         <article className="stat">
           <span>Bounced</span>
           <strong>{summary?.bounced ?? '—'}</strong>
-          <small>DSN or webhook</small>
+          <small>Hard + soft</small>
+        </article>
+        <article className="stat">
+          <span>Hard bounces</span>
+          <strong>{summary?.hardBounced ?? '—'}</strong>
+          <small>Permanent failures</small>
+        </article>
+        <article className="stat">
+          <span>Soft bounces</span>
+          <strong>{summary?.softBounced ?? '—'}</strong>
+          <small>Transient failures</small>
+        </article>
+        <article className="stat">
+          <span>Deferred</span>
+          <strong>{summary?.deferred ?? '—'}</strong>
+          <small>Still retrying</small>
         </article>
         <article className="stat">
           <span>Opened</span>

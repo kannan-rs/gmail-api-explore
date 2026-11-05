@@ -12,6 +12,8 @@ suppressing that copy; the Sent entry is the audit evidence.
 
 - Connects a Gmail account with OAuth 2.0 and stores the refresh token encrypted with
   AES-256-GCM.
+- Can auto-connect from a pre-provisioned `GOOGLE_REFRESH_TOKEN`, so browsers and other laptops
+  do not need the Connect button.
 - Sends To/Cc/Bcc messages with HTML or plain text and attachments through
   `users.messages.send`.
 - Stores the RFC 5322 `Message-ID`, Gmail message/thread IDs, labels, status, and errors.
@@ -19,7 +21,8 @@ suppressing that copy; the Sent entry is the audit evidence.
 - Provides a UI to compose, send, filter, verify, inspect events, reconcile, and export CSV.
 - Shows a deep link to the Gmail Sent item for each successful send.
 - Adds a per-send tracking ID, open pixel, acknowledgement link, and a tracking event timeline.
-- Syncs Gmail metadata for DSN bounces, read-receipt-like messages, and thread replies.
+- Syncs Gmail metadata for DSN bounces, read-receipt-like messages, and thread replies, with
+  hard/soft bounce classification and deferred retry counters.
 - Accepts authenticated webhooks for delivered/bounce/open/read/complaint events from Workspace
   or an ESP.
 - Keeps the Gmail adapter isolated behind a small interface without adding other providers.
@@ -72,6 +75,73 @@ The Google OAuth client must use this authorized redirect URI:
 http://localhost:3000/api/auth/google/callback
 ```
 
+### Google Cloud console setup paths
+
+Select the correct project in the console first.
+
+1. Enable the Gmail API:
+   `APIs & Services → Library → Gmail API → Enable`
+   Direct link: `https://console.cloud.google.com/apis/library/gmail.googleapis.com`
+2. Add OAuth scopes:
+   `APIs & Services → OAuth consent screen → Scopes → Add or remove scopes`
+   Newer UI: `Google Auth Platform → Data Access → Add or remove scopes`
+   Add:
+   - `https://www.googleapis.com/auth/gmail.send`
+   - `https://www.googleapis.com/auth/gmail.metadata`
+3. Set the redirect URI:
+   `APIs & Services → Credentials → OAuth 2.0 Client IDs → <your Web client> → Authorized redirect URIs`
+   Newer UI: `Google Auth Platform → Clients → <your client> → Authorized redirect URIs`
+   Value: `http://localhost:3000/api/auth/google/callback`
+4. Add a test user while the app is in Testing:
+   `APIs & Services → OAuth consent screen → Test users → Add users`
+   Newer UI: `Google Auth Platform → Audience → Test users`
+
+No Pub/Sub, Gmail push notifications, domain-wide delegation, or `gmail.readonly` scope is
+required.
+
+### Optional Google Workspace Admin console paths
+
+- Read receipts: `admin.google.com → Apps → Google Workspace → Gmail → User settings → Email read receipts`
+- Email Log Search: `admin.google.com → Reporting → Email Log Search`
+- BigQuery export: `admin.google.com → Reporting → BigQuery export`
+
+### Local app configuration
+
+Set the OAuth and tracking values in `.env` at the repository root. Set `PUBLIC_BASE_URL` to a
+reachable HTTPS URL for pixel/ack links, then configure the optional `TRACKING_*` variables from
+the table below. Never commit `.env`.
+
+### Automatic Gmail connection
+
+Client ID and client secret identify the OAuth app, but they do not authorize a mailbox by
+themselves. Gmail requires a one-time consent to issue a refresh token. To avoid the Connect
+button on every laptop, obtain that token once and set it in `.env`:
+
+```bash
+npm run auth:token
+```
+
+The helper uses `GOOGLE_REDIRECT_URI` and temporarily listens on that local port, so stop the
+API first if it is using port 3000. Approve access, then copy the printed value:
+
+```dotenv
+GOOGLE_REFRESH_TOKEN=1//...
+```
+
+On startup, the API validates the token with Google, stores it encrypted in Postgres, and
+auto-connects the mailbox. If the stored credential is missing later (for example, after a
+database reset), the next API request reconnects from the environment token. The UI then shows
+the mailbox as connected on every browser or laptop that uses the same API and database, and
+the Disconnect button is hidden while `GOOGLE_REFRESH_TOKEN` is set. If the token changes,
+restarting the API replaces the stored credential with the new token. Remove
+`GOOGLE_REFRESH_TOKEN` to go back to the one-time UI connection flow.
+
+For multiple laptops, either use one shared API/Postgres instance or put the same
+`GOOGLE_REFRESH_TOKEN` in each local `.env`. Never commit `.env` or share the token.
+
+While the OAuth app is in Testing, Google expires refresh tokens after 7 days. Publish the app
+or use a Google Workspace account for longer-lived tokens.
+
 Follow [docs/GOOGLE_OAUTH_SETUP.md](docs/GOOGLE_OAUTH_SETUP.md) for the full setup and
 troubleshooting guide.
 
@@ -88,6 +158,7 @@ troubleshooting guide.
 | `TEST_DATABASE_URL` | Tests | Separate test database; never the dev database |
 | `GOOGLE_CLIENT_ID` | Yes for live | Google OAuth web client ID |
 | `GOOGLE_CLIENT_SECRET` | Yes for live | Google OAuth web client secret |
+| `GOOGLE_REFRESH_TOKEN` | Auto-connect | Pre-provisioned refresh token; when set, the API auto-connects at startup |
 | `GOOGLE_REDIRECT_URI` | No | Must match the Google console redirect URI |
 | `TOKEN_ENCRYPTION_KEY` | Yes | Base64-encoded 32-byte AES key |
 | `COOKIE_SECRET` | Yes | Signs the OAuth state cookie |
@@ -103,6 +174,7 @@ troubleshooting guide.
 | `READ_RECEIPT_REQUESTED` | No | Adds read-receipt request headers, default `true` |
 | `TRACKING_WEBHOOK_SECRET` | Webhook | Shared secret for `POST /api/tracking/webhook`; empty disables it |
 | `TRACKING_SYNC_DAYS` | No | Gmail metadata lookback in days, default `7`, max `30` |
+| `TRACKING_SYNC_INTERVAL_MINUTES` | No | Automatic Gmail sync interval in minutes, default `30`; `0` disables |
 
 Generate local secrets with:
 
@@ -156,7 +228,11 @@ npm run db:reset      # drop, recreate, migrate, and seed (development only)
   `Message-ID`.
 - **Failed** means the provider failed; no false `SENT` state is written.
 - **Tracking events** are separate from the send status. They record evidence such as a DSN
-  bounce, a pixel open, a read receipt, an acknowledgement click, a reply, or a webhook event.
+  bounce (hard/soft), a deferred retry, a pixel open, a read receipt, an acknowledgement click,
+  a reply, or a webhook event. See the
+  [status and test matrix](docs/EMAIL_TRACKING_SETUP.md#14-status-and-test-matrix) for every
+  state and how to exercise it. The delivery plan lives in
+  [docs/TRACKING_PLAN.md](docs/TRACKING_PLAN.md).
 - The Gmail Sent copy proves Gmail accepted and stored the message. It is **not** proof of
   recipient delivery, inbox placement, opens, or clicks.
 - Delivery is recorded only when Workspace Email Log Search/BigQuery or an ESP webhook supplies
@@ -165,7 +241,9 @@ npm run db:reset      # drop, recreate, migrate, and seed (development only)
 - Read receipts are Workspace-only and are not exposed through the Gmail API. The app adds
   request headers, but Gmail or the recipient may ignore them.
 - Reusing an idempotency key with different content is rejected. A retry after a failed
-  attempt reuses the same `Message-ID` so Gmail search recovery can find the original.
+  attempt reuses the same `Message-ID`; recovery scans recent `SENT` metadata because the
+  `gmail.metadata` scope does not support Gmail `q` search. Gmail may rewrite the header, so
+  verification adopts Gmail's actual `Message-ID` and records a `message_id_adopted` event.
 - The UI and CSV link each row back to its Gmail message ID.
 
 ## Testing
@@ -221,7 +299,10 @@ docs/             plan, OAuth guide, AWS blueprint, skills
 - Consumer Gmail sending limits are much lower than Workspace limits.
 - Delivery, bounce, open, read, acknowledgement, reply, and complaint tracking depends on
   external evidence; see [docs/EMAIL_TRACKING_SETUP.md](docs/EMAIL_TRACKING_SETUP.md).
-- Gmail metadata sync cannot read DSN/MDN bodies and there is no background scheduler yet.
+- Gmail metadata sync cannot read DSN/MDN bodies. Automatic sync runs every 30 minutes by
+  default; set `TRACKING_SYNC_INTERVAL_MINUTES=0` to make it manual only.
+- The automatic sync imports DSN/MDN/reply evidence from Gmail; it does not add a
+  Workspace/BigQuery delivery-event bridge.
 - One connected mailbox in local V1; the schema already supports multiple mailboxes.
 - Gmail API always keeps a Sent copy; there is no supported no-Sent send mode.
 - No Netcore, SMTP, or other provider integration.

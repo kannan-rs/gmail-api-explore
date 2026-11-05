@@ -42,6 +42,8 @@ Edit `.env`:
 APP_BASE_URL=http://localhost:5173
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-client-secret
+# Optional; see "Automatic connection from a refresh token" below.
+GOOGLE_REFRESH_TOKEN=
 GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/google/callback
 LIVE_TEST_RECIPIENT=your-test-account@gmail.com
 ```
@@ -60,6 +62,30 @@ Put the first value in `TOKEN_ENCRYPTION_KEY` and the second in `COOKIE_SECRET`.
 must decode to exactly 32 bytes. Changing `TOKEN_ENCRYPTION_KEY` makes existing stored refresh
 tokens unreadable; disconnect and reconnect.
 
+### Automatic connection from a refresh token
+
+The client ID and client secret identify the OAuth app, but they do not authorize a mailbox by
+themselves. Gmail requires one consent to issue a refresh token. Obtain it once, then let every
+app instance connect automatically:
+
+1. Stop the API if it is using port 3000.
+2. Run `npm run auth:token`.
+3. Open the printed Google URL, choose the mailbox, and approve the scopes.
+4. Copy the printed `GOOGLE_REFRESH_TOKEN` value into `.env`.
+5. Restart the app.
+
+On startup the API validates the token with Google, stores it encrypted in Postgres, and
+auto-connects the mailbox. If the credential is removed later, the next API request reconnects
+from the environment token. The UI shows the mailbox as connected on every browser or laptop
+that uses the same API and database, and hides the Disconnect button while
+`GOOGLE_REFRESH_TOKEN` is set. If the token changes, update `.env` and restart; the app replaces
+the stored credential. Remove `GOOGLE_REFRESH_TOKEN` to return to the one-time UI connection
+flow.
+
+For multiple laptops, either share one API/Postgres instance or put the same
+`GOOGLE_REFRESH_TOKEN` in each local `.env`. Never commit `.env` or share the token; it grants
+access to the mailbox's Gmail send and metadata scopes.
+
 ## 3. Start and connect
 
 ```bash
@@ -70,11 +96,12 @@ npm run db:seed
 npm run dev
 ```
 
-Open `http://localhost:5173`, click **Connect Gmail**, choose the test account, and approve the
-scopes. If Google says the app is unverified, choose **Advanced → Go to Gmail Send Tracker
-(unsafe)**; this is expected for a personal Testing-mode app, and the account must be listed
-as a test user. A successful callback returns to the UI with `?connected=<email>`; the app
-removes the query parameter after showing the notice.
+If `GOOGLE_REFRESH_TOKEN` is set, the API connects at startup and the UI opens already
+connected. Otherwise, open `http://localhost:5173`, click **Connect Gmail**, choose the test
+account, and approve the scopes. If Google says the app is unverified, choose **Advanced → Go
+to Gmail Send Tracker (unsafe)**; this is expected for a personal Testing-mode app, and the
+account must be listed as a test user. A successful callback returns to the UI with
+`?connected=<email>`; the app removes the query parameter after showing the notice.
 
 Check the connection:
 
@@ -88,7 +115,8 @@ curl http://127.0.0.1:3000/api/auth/me
 ## 4. Optional tracking configuration
 
 The tracking layer uses the same `gmail.metadata` scope. No additional OAuth scope is
-required for Gmail DSN/reply metadata sync.
+required for Gmail DSN/reply metadata sync. The metadata scope does not support the Gmail
+search `q` parameter, so sync lists recent messages by label and filters locally.
 
 Set a public URL if recipients must reach the pixel or acknowledgement link:
 
@@ -131,15 +159,17 @@ delivery.
 | `invalid_grant` | Refresh token expired, revoked, or key changed | Disconnect, remove app access at Google, reconnect |
 | No refresh token returned | Consent reused without offline prompt | The app requests `prompt=consent`; remove app access and reconnect |
 | `Google OAuth is not configured` | Client ID/secret empty | Fill both values and restart the API |
+| Auto-connect fails with `invalid_grant` | `GOOGLE_REFRESH_TOKEN` expired or revoked | Run `npm run auth:token` again and update `.env` |
 | `GMAIL_API_DISABLED` / Gmail API 403 | Gmail API disabled in the OAuth client's project, or scope not granted | Enable Gmail API in that exact project, wait, then retry |
 | `Unable to check Gmail for the previous attempt` | Retry/recovery search also hit the disabled Gmail API | Enable the API, then retry the same send |
 | Send fails with auth error | Token lifetime or scope problem | Reconnect; inspect the event history for the safe error code |
 
 ## Token lifetime
 
-While the OAuth app is in **Testing**, Google expires refresh tokens after 7 days. Reconnect
-when Gmail returns `invalid_grant`. For longer-lived experiments, publish the app or use a
-Workspace account and complete Google's verification requirements.
+While the OAuth app is in **Testing**, Google expires refresh tokens after 7 days. This applies
+to both the UI connection and `GOOGLE_REFRESH_TOKEN`; rerun `npm run auth:token` and update
+`.env` when Gmail returns `invalid_grant`. For longer-lived experiments, publish the app or use
+a Workspace account and complete Google's verification requirements.
 
 ## Revoke access
 

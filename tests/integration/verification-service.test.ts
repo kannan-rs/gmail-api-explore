@@ -167,6 +167,41 @@ describe('VerificationService', () => {
     expect(events.map((event) => event.eventType)).toContain('verification_failed');
   });
 
+  it('adopts a Gmail-rewritten Message-ID and marks the send VERIFIED', async () => {
+    const send = await createSend('SENT');
+    const rewritten = '<gmail-rewritten@mail.gmail.com>';
+    provider.verifyImpl = async () => ({
+      verified: false,
+      labels: ['SENT'],
+      headers: { 'message-id': rewritten, from: 'owner@example.com' },
+      reason: 'Message-ID mismatch',
+    });
+
+    const result = await service.verify(send.id);
+
+    expect(result.verified).toBe(true);
+    expect(result.send.status).toBe('VERIFIED');
+    expect(result.send.messageIdHeader).toBe(rewritten);
+    const events = await sends.getEvents(send.id);
+    expect(events.map((event) => event.eventType)).toContain('message_id_adopted');
+  });
+
+  it('does not adopt a Message-ID when other verification checks fail', async () => {
+    const send = await createSend('SENT');
+    provider.verifyImpl = async () => ({
+      verified: false,
+      labels: ['SENT'],
+      headers: { 'message-id': '<other@mail.gmail.com>', from: 'other@example.com' },
+      reason: 'Message-ID mismatch; From header mismatch',
+    });
+
+    const result = await service.verify(send.id);
+
+    expect(result.verified).toBe(false);
+    expect(result.send.status).toBe('SENT');
+    expect(result.send.messageIdHeader).toBe(send.messageIdHeader);
+  });
+
   it('recovers a SENDING message found by Message-ID and verifies it', async () => {
     const send = await createSend('SENDING');
     provider.lookupImpl = async () => ({

@@ -209,7 +209,9 @@ Production requirements:
 ## 9. Tracking, read receipts, and delivery evidence
 
 The app uses the existing `gmail.metadata` scope for tracking. No extra OAuth scope is
-required for Gmail DSN, read-receipt-like message, or thread-reply sync.
+required for Gmail DSN, read-receipt-like message, or thread-reply sync. Because the metadata
+scope does not support the Gmail search `q` parameter, the sync lists recent inbox messages by
+label and filters them locally.
 
 ### Read receipts
 
@@ -238,8 +240,9 @@ The Gmail API does not expose per-message delivery or bounce events. Choose one 
   a bridge job that posts normalized events to `/api/tracking/webhook`.
 - **ESP webhook:** if another sending platform sees delivery/bounce/open events, map them to the
   ledger with `trackingId`, `messageIdHeader`, or `providerMessageId`.
-- **Gmail metadata sync:** the app can detect DSN-like and read-receipt-like messages in the
-  sender inbox and thread replies. It cannot read DSN or MDN bodies with `gmail.metadata`.
+- **Gmail metadata sync:** the app scans recent inbox metadata for DSN-like and
+  read-receipt-like messages and checks thread replies. It cannot read DSN or MDN bodies with
+  `gmail.metadata`, and it cannot use Gmail search because the metadata scope rejects `q`.
 
 ### Public tracking URL
 

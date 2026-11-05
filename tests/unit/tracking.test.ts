@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildTrackingLinks,
+  classifyBounceText,
   createTrackingId,
   decorateEmailBodies,
+  inferBounceTypeFromStatus,
   isTrackingId,
+  normalizeBounceType,
   normalizeMessageId,
+  resolveBounceType,
 } from '../../src/domain/tracking';
 
 describe('tracking domain', () => {
@@ -65,5 +69,36 @@ describe('tracking domain', () => {
     expect(normalizeMessageId('<abc@example.com>')).toBe('abc@example.com');
     expect(normalizeMessageId('abc@example.com')).toBe('abc@example.com');
     expect(normalizeMessageId(null)).toBe('');
+  });
+
+  it('normalizes explicit bounce types', () => {
+    expect(normalizeBounceType('HARD')).toBe('hard');
+    expect(normalizeBounceType(' soft ')).toBe('soft');
+    expect(normalizeBounceType('maybe')).toBe('unknown');
+    expect(normalizeBounceType(undefined)).toBe('unknown');
+  });
+
+  it('infers a bounce type from SMTP status codes', () => {
+    expect(inferBounceTypeFromStatus('550')).toBe('hard');
+    expect(inferBounceTypeFromStatus('5.1.1')).toBe('hard');
+    expect(inferBounceTypeFromStatus('450')).toBe('soft');
+    expect(inferBounceTypeFromStatus('4.2.2')).toBe('soft');
+    expect(inferBounceTypeFromStatus('delivered')).toBeNull();
+  });
+
+  it('prefers explicit bounce types, then SMTP status', () => {
+    expect(resolveBounceType({ bounceType: 'soft', smtpStatus: '550' })).toBe('soft');
+    expect(resolveBounceType({ smtpStatus: '550' })).toBe('hard');
+    expect(resolveBounceType({ statusCode: '4.2.2' })).toBe('soft');
+    expect(resolveBounceType({})).toBe('unknown');
+  });
+
+  it('classifies DSN subject text as hard, soft, or unknown', () => {
+    expect(classifyBounceText('Delivery Status Notification (Failure)')).toBe('hard');
+    expect(classifyBounceText('Undelivered Mail Returned to Sender')).toBe('hard');
+    expect(classifyBounceText('Mail delivery failed: returning message to sender')).toBe('hard');
+    expect(classifyBounceText('Delayed Mail (still being retried)')).toBe('soft');
+    expect(classifyBounceText('temporary failure, will retry')).toBe('soft');
+    expect(classifyBounceText('Delivery Status Notification')).toBe('unknown');
   });
 });

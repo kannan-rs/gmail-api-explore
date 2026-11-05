@@ -148,6 +148,18 @@ export function SendDetail({ id, onClose }: SendDetailProps) {
                   </strong>
                 </div>
                 <div>
+                  <span>First deferred</span>
+                  <strong>{formatDateTime(detail.send.deferredAt)}</strong>
+                </div>
+                <div>
+                  <span>Last deferred</span>
+                  <strong>{formatDateTime(detail.send.lastDeferredAt)}</strong>
+                </div>
+                <div>
+                  <span>Deferral count</span>
+                  <strong>{detail.send.deferredCount}</strong>
+                </div>
+                <div>
                   <span>First open</span>
                   <strong>{formatDateTime(detail.send.openedAt)}</strong>
                 </div>

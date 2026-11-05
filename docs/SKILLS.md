@@ -22,8 +22,8 @@ accepted the message and still has it in the Sent folder.
 
 - OAuth 2.0 authorization-code flow with `access_type=offline`.
 - Google Identity scopes, test users, redirect URIs, and refresh-token lifetimes.
-- Gmail API `users.messages.send`, `users.messages.get(format=metadata)`, and
-  `rfc822msgid:` search.
+- Gmail API `users.messages.send`, `users.messages.get(format=metadata)`, and label-based
+  `users.messages.list` (the `gmail.metadata` scope does not support `q` search).
 - MIME/RFC 5322 message construction and base64url encoding.
 - AES-256-GCM token encryption and signed cookies.
 - Idempotency keys, request hashing, unique `Message-ID`, and timeout recovery.

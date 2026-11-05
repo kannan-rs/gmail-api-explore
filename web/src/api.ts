@@ -34,6 +34,9 @@ export interface SendRow {
   deliveredAt: string | null;
   bouncedAt: string | null;
   bounceType: string | null;
+  deferredAt: string | null;
+  lastDeferredAt: string | null;
+  deferredCount: number;
   openedAt: string | null;
   lastOpenedAt: string | null;
   openCount: number;
@@ -139,6 +142,7 @@ export interface MailboxInfo {
 export interface MeResponse {
   configured: boolean;
   connected: boolean;
+  autoConnect: boolean;
   mailbox: MailboxInfo | null;
 }
 
@@ -158,6 +162,9 @@ export interface Summary {
   inFlight: number;
   delivered: number;
   bounced: number;
+  hardBounced: number;
+  softBounced: number;
+  deferred: number;
   opened: number;
   read: number;
   acknowledged: number;

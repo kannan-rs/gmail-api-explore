@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:live": "RUN_LIVE_GMAIL_TESTS=1 vitest run tests/live",
+    "auth:token": "tsx scripts/google-refresh-token.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

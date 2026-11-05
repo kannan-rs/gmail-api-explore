@@ -244,8 +244,9 @@ export class SendService {
           send.messageIdHeader,
           connection.mailbox.email,
         );
-        final = await recordVerificationResult(this.deps.sends, sent, verification);
-        verified = verification.verified;
+        const recorded = await recordVerificationResult(this.deps.sends, sent, verification);
+        final = recorded.send;
+        verified = recorded.verification.verified;
       } catch (error) {
         await this.deps.sends.addEvent(send.id, 'verification_error', {
           code: isAppError(error) ? error.code : 'UNKNOWN',
@@ -321,7 +322,8 @@ export class SendService {
         send.messageIdHeader,
         send.fromEmail,
       );
-      return recordVerificationResult(this.deps.sends, recovered, verification);
+      const recorded = await recordVerificationResult(this.deps.sends, recovered, verification);
+      return recorded.send;
     } catch (error) {
       await this.deps.sends.addEvent(send.id, 'verification_error', {
         code: isAppError(error) ? error.code : 'UNKNOWN',
@@ -340,7 +342,8 @@ export class SendService {
         existing.messageIdHeader,
         existing.fromEmail,
       );
-      return recordVerificationResult(this.deps.sends, existing, verification);
+      const recorded = await recordVerificationResult(this.deps.sends, existing, verification);
+      return recorded.send;
     }
 
     let lookup: ProviderMessageLookup;
@@ -381,7 +384,8 @@ export class SendService {
         existing.messageIdHeader,
         existing.fromEmail,
       );
-      return recordVerificationResult(this.deps.sends, accepted, verification);
+      const recorded = await recordVerificationResult(this.deps.sends, accepted, verification);
+      return recorded.send;
     } catch (error) {
       await this.deps.sends.addEvent(existing.id, 'verification_error', {
         code: isAppError(error) ? error.code : 'UNKNOWN',

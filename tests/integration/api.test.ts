@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AppConfig, loadConfig } from '../../src/config';
 import type { Database } from '../../src/db/client';
 import { ProviderError } from '../../src/domain/errors';
@@ -102,6 +102,7 @@ async function makeApp(config: AppConfig = baseConfig): Promise<FastifyInstance>
     config,
     db,
     resolveProvider: () => provider,
+    autoConnectGmail: true,
   });
 }
 
@@ -133,6 +134,10 @@ beforeEach(async () => {
   await connectMailbox();
   provider = new FakeProvider();
   app = await makeApp();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 afterAll(async () => {
@@ -171,6 +176,56 @@ describe('health and auth API', () => {
 
     const response = await app.inject({ method: 'GET', url: '/api/auth/me' });
     expect(response.json()).toMatchObject({ connected: false, mailbox: null });
+  });
+
+  it('auto-connects from GOOGLE_REFRESH_TOKEN when no credential exists', async () => {
+    await credentialService.disconnect();
+    vi.spyOn(GmailOAuthService.prototype, 'getProfileWithRefreshToken').mockResolvedValue({
+      email: 'auto@example.com',
+      name: null,
+    });
+
+    const autoApp = await makeApp({
+      ...baseConfig,
+      googleClientId: 'test-client-id',
+      googleClientSecret: 'test-client-secret',
+      googleConfigured: true,
+      googleRefreshToken: 'env-refresh-token',
+    });
+
+    const response = await autoApp.inject({ method: 'GET', url: '/api/auth/me' });
+    expect(response.json()).toMatchObject({
+      connected: true,
+      autoConnect: true,
+      mailbox: { email: 'auto@example.com' },
+    });
+
+    await autoApp.close();
+  });
+
+  it('re-auto-connects while running when the stored credential disappears', async () => {
+    vi.spyOn(GmailOAuthService.prototype, 'getProfileWithRefreshToken').mockResolvedValue({
+      email: 'auto@example.com',
+      name: null,
+    });
+
+    const autoApp = await makeApp({
+      ...baseConfig,
+      googleClientId: 'test-client-id',
+      googleClientSecret: 'test-client-secret',
+      googleConfigured: true,
+      googleRefreshToken: 'env-refresh-token',
+    });
+
+    await credentialService.disconnect();
+    const response = await autoApp.inject({ method: 'GET', url: '/api/auth/me' });
+    expect(response.json()).toMatchObject({
+      connected: true,
+      autoConnect: true,
+      mailbox: { email: 'auto@example.com' },
+    });
+
+    await autoApp.close();
   });
 
   it('returns 503 when Google OAuth is not configured', async () => {
@@ -350,6 +405,9 @@ describe('stats, export, and clients API', () => {
       verified: 1,
       failed: 0,
       inFlight: 0,
+      hardBounced: 0,
+      softBounced: 0,
+      deferred: 0,
     });
 
     const daily = await app.inject({ method: 'GET', url: '/api/stats/daily?days=7' });
@@ -378,6 +436,9 @@ describe('stats, export, and clients API', () => {
     expect(response.headers['content-type']).toContain('text/csv');
     expect(response.headers['content-disposition']).toContain('attachment; filename=');
     expect(response.body).toContain('message_id_header');
+    expect(response.body).toContain('deferred_at');
+    expect(response.body).toContain('last_deferred_at');
+    expect(response.body).toContain('deferred_count');
     expect(response.body).toContain('"Statement, ""urgent"""');
     expect(response.body).toContain('gmail-api-1');
     expect(response.body).not.toContain('refresh-token');

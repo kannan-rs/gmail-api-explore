@@ -78,12 +78,12 @@ export class VerificationService {
         };
       }
 
-      const final = await recordVerificationResult(this.deps.sends, accepted, verification);
+      const recorded = await recordVerificationResult(this.deps.sends, accepted, verification);
       return {
-        send: final,
-        verified: verification.verified,
-        labels: verification.labels,
-        reason: verification.reason,
+        send: recorded.send,
+        verified: recorded.verification.verified,
+        labels: recorded.verification.labels,
+        reason: recorded.verification.reason,
       };
     }
 
@@ -92,13 +92,13 @@ export class VerificationService {
       send.messageIdHeader,
       send.fromEmail,
     );
-    const final = await recordVerificationResult(this.deps.sends, send, verification);
+    const recorded = await recordVerificationResult(this.deps.sends, send, verification);
 
     return {
-      send: final,
-      verified: verification.verified,
-      labels: verification.labels,
-      reason: verification.reason,
+      send: recorded.send,
+      verified: recorded.verification.verified,
+      labels: recorded.verification.labels,
+      reason: recorded.verification.reason,
     };
   }
 

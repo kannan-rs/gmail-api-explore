@@ -59,25 +59,26 @@ export class GmailProvider implements EmailProvider {
   }
 
   async findByMessageId(messageId: string): Promise<ProviderMessageLookup> {
-    const query = `rfc822msgid:${normalizeMessageId(messageId)}`;
-    const messages = await this.api.listMessages(query, 5);
-    const match = messages[0];
+    const expected = normalizeMessageId(messageId);
+    const page = await this.api.listMessagesByLabel(['SENT'], 100);
 
-    if (!match) {
-      return {
-        found: false,
-        providerMessageId: null,
-        providerThreadId: null,
-        labels: [],
-      };
+    for (const ref of page.messages) {
+      const metadata = await this.api.getMessageMetadata(ref.id);
+      if (normalizeMessageId(metadata.headers['message-id']) === expected) {
+        return {
+          found: true,
+          providerMessageId: ref.id,
+          providerThreadId: ref.threadId ?? metadata.threadId,
+          labels: metadata.labelIds,
+        };
+      }
     }
 
-    const metadata = await this.api.getMessageMetadata(match.id);
     return {
-      found: true,
-      providerMessageId: match.id,
-      providerThreadId: match.threadId ?? metadata.threadId,
-      labels: metadata.labelIds,
+      found: false,
+      providerMessageId: null,
+      providerThreadId: null,
+      labels: [],
     };
   }
 }

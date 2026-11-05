@@ -21,6 +21,7 @@ const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
   GOOGLE_CLIENT_ID: z.string().default(''),
   GOOGLE_CLIENT_SECRET: z.string().default(''),
+  GOOGLE_REFRESH_TOKEN: z.string().default(''),
   GOOGLE_REDIRECT_URI: z.url().default('http://localhost:3000/api/auth/google/callback'),
   TOKEN_ENCRYPTION_KEY: z.string().min(1),
   COOKIE_SECRET: z.string().min(1),
@@ -40,6 +41,7 @@ const EnvSchema = z.object({
   READ_RECEIPT_REQUESTED: booleanString.default(true),
   TRACKING_WEBHOOK_SECRET: z.string().default(''),
   TRACKING_SYNC_DAYS: z.coerce.number().int().min(1).max(30).default(7),
+  TRACKING_SYNC_INTERVAL_MINUTES: z.coerce.number().int().min(0).max(1440).default(30),
 });
 
 export interface AppConfig {
@@ -51,6 +53,7 @@ export interface AppConfig {
   readonly databaseUrl: string;
   readonly googleClientId: string;
   readonly googleClientSecret: string;
+  readonly googleRefreshToken: string;
   readonly googleRedirectUri: string;
   readonly googleConfigured: boolean;
   readonly tokenEncryptionKey: string;
@@ -67,6 +70,7 @@ export interface AppConfig {
   readonly readReceiptRequested: boolean;
   readonly trackingWebhookSecret: string;
   readonly trackingSyncDays: number;
+  readonly trackingSyncIntervalMinutes: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -84,6 +88,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const data = result.data;
   const googleClientId = data.GOOGLE_CLIENT_ID.trim();
   const googleClientSecret = data.GOOGLE_CLIENT_SECRET.trim();
+  const googleRefreshToken = data.GOOGLE_REFRESH_TOKEN.trim();
   const publicBaseUrl = (data.PUBLIC_BASE_URL ?? data.APP_BASE_URL).replace(/\/+$/, '');
 
   return {
@@ -95,6 +100,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databaseUrl: data.DATABASE_URL,
     googleClientId,
     googleClientSecret,
+    googleRefreshToken,
     googleRedirectUri: data.GOOGLE_REDIRECT_URI,
     googleConfigured: googleClientId.length > 0 && googleClientSecret.length > 0,
     tokenEncryptionKey: data.TOKEN_ENCRYPTION_KEY,
@@ -111,5 +117,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     readReceiptRequested: data.READ_RECEIPT_REQUESTED,
     trackingWebhookSecret: data.TRACKING_WEBHOOK_SECRET.trim(),
     trackingSyncDays: data.TRACKING_SYNC_DAYS,
+    trackingSyncIntervalMinutes: data.TRACKING_SYNC_INTERVAL_MINUTES,
   };
 }

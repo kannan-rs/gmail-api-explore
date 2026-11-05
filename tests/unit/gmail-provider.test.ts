@@ -25,7 +25,7 @@ class FakeGmailApi implements GmailApi {
     },
   };
   listed: GmailMessageRef[] = [];
-  lastQuery: string | null = null;
+  lastLabelIds: string[] | null = null;
 
   async sendRaw(rawBase64Url: string) {
     this.sentRaw.push(rawBase64Url);
@@ -36,9 +36,9 @@ class FakeGmailApi implements GmailApi {
     return this.metadata;
   }
 
-  async listMessages(query: string) {
-    this.lastQuery = query;
-    return this.listed;
+  async listMessagesByLabel(labelIds: string[]) {
+    this.lastLabelIds = labelIds;
+    return { messages: this.listed, nextPageToken: null };
   }
 }
 
@@ -141,7 +141,7 @@ describe('GmailProvider', () => {
 
     const result = await provider.findByMessageId(fixedMessageId);
 
-    expect(api.lastQuery).toBe('rfc822msgid:33333333-3333-4333-8333-333333333333@example.com');
+    expect(api.lastLabelIds).toEqual(['SENT']);
     expect(result).toEqual({
       found: true,
       providerMessageId: 'gmail-1',

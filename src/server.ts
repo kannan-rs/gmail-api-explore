@@ -22,7 +22,13 @@ const logger: FastifyServerOptions['logger'] =
       }
     : { level: config.logLevel, redact };
 
-const app = await buildApp({ config, db, logger });
+const app = await buildApp({
+  config,
+  db,
+  logger,
+  autoConnectGmail: true,
+  autoSyncTracking: true,
+});
 
 async function shutdown(signal: string): Promise<void> {
   app.log.info({ signal }, 'Shutting down');

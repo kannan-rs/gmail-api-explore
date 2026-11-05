@@ -71,6 +71,16 @@ export class CredentialService {
     });
   }
 
+  async ensureConnectionFromRefreshToken(refreshToken: string): Promise<MailboxConnection> {
+    const profile = await this.oauth.getProfileWithRefreshToken(refreshToken);
+    return this.saveConnection({
+      profile,
+      refreshToken,
+      scopes: [...GMAIL_OAUTH_SCOPES],
+      tokenType: 'Bearer',
+    });
+  }
+
   async getActiveConnection(): Promise<MailboxConnection> {
     const latest = await this.credentials.findLatestWithMailbox();
     if (!latest) {

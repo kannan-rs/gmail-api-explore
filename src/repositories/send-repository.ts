@@ -70,6 +70,9 @@ export interface SendSummary {
   inFlight: number;
   delivered: number;
   bounced: number;
+  hardBounced: number;
+  softBounced: number;
+  deferred: number;
   opened: number;
   read: number;
   acknowledged: number;
@@ -193,6 +196,19 @@ export class SendRepository {
     return row;
   }
 
+  async updateMessageIdHeader(id: string, messageIdHeader: string): Promise<EmailSendRow> {
+    const [row] = await this.db
+      .update(emailSends)
+      .set({ messageIdHeader, updatedAt: new Date() })
+      .where(eq(emailSends.id, id))
+      .returning();
+
+    if (!row) {
+      throw new NotFoundError('Send record not found');
+    }
+    return row;
+  }
+
   async addEvent(
     sendId: string,
     eventType: string,
@@ -260,6 +276,9 @@ export class SendRepository {
         inFlight: sql<number>`(count(*) filter (where ${emailSends.status} = 'SENDING'))::int`,
         delivered: sql<number>`(count(*) filter (where ${emailSends.deliveredAt} is not null))::int`,
         bounced: sql<number>`(count(*) filter (where ${emailSends.bouncedAt} is not null))::int`,
+        hardBounced: sql<number>`(count(*) filter (where ${emailSends.bouncedAt} is not null and ${emailSends.bounceType} = 'hard'))::int`,
+        softBounced: sql<number>`(count(*) filter (where ${emailSends.bouncedAt} is not null and ${emailSends.bounceType} = 'soft'))::int`,
+        deferred: sql<number>`(count(*) filter (where ${emailSends.deferredAt} is not null))::int`,
         opened: sql<number>`(count(*) filter (where ${emailSends.openedAt} is not null))::int`,
         read: sql<number>`(count(*) filter (where ${emailSends.readAt} is not null))::int`,
         acknowledged: sql<number>`(count(*) filter (where ${emailSends.acknowledgedAt} is not null))::int`,
@@ -277,6 +296,9 @@ export class SendRepository {
         inFlight: 0,
         delivered: 0,
         bounced: 0,
+        hardBounced: 0,
+        softBounced: 0,
+        deferred: 0,
         opened: 0,
         read: 0,
         acknowledged: 0,

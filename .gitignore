@@ -34,16 +34,13 @@ coverage/
 playwright-report/
 test-results/
 
-# Editor & OS files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
+# Editor, OS & Hidden / dot files
+.*
+.**
+**/.*
+**/.**
 ehthumbs.db
 Thumbs.db
-.vscode/
-.idea/
 *.sublime-project
 *.sublime-workspace
 *.swp
@@ -55,7 +52,8 @@ Thumbs.db
 *.db
 *.db-journal
 *.db-wal
-.cache/
-.turbo/
-.parcel-cache/
-.eslintcache
+
+# Exceptions to allow essential configuration files
+!.gitignore
+!.env.example
+!.nvmrc

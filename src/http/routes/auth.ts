@@ -89,6 +89,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     return {
       configured: ctx.config.googleConfigured,
       connected: active !== null,
+      autoConnect: ctx.config.googleRefreshToken.length > 0,
       mailbox: active
         ? {
             id: active.mailbox.id,

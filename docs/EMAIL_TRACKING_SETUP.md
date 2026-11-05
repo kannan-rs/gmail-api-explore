@@ -13,8 +13,8 @@ an acknowledgement link, Gmail metadata sync, a Workspace/BigQuery bridge, or an
 | --- | --- | --- | --- |
 | Sent / accepted by Gmail | Gmail API + `SENT` label + `Message-ID` | Yes | This is the existing `SENT`/`VERIFIED` ledger status. |
 | Delivered | Workspace Email Log Search/BigQuery or ESP webhook | Source-dependent | The Gmail API does not expose per-message delivery. |
-| Bounce | DSN in the sender inbox, or ESP webhook | Metadata sync is best-effort | The app can detect a DSN by sender/subject/headers but cannot read the DSN body with `gmail.metadata`. |
-| Deferred / soft bounce | DSN subject such as “Delayed Mail”, or webhook | Best-effort | Recorded as `DEFERRED`. |
+| Hard bounce | DSN failure in the sender inbox, or ESP webhook | Metadata sync is best-effort | The app classifies failure subjects/headers as `hard`; a webhook can send explicit `bounceType` or `5xx` status. |
+| Soft bounce / deferred | DSN delay subject, or webhook | Best-effort | `DEFERRED` events track `deferredAt`, `lastDeferredAt`, and `deferredCount`; webhook `BOUNCED` with `bounceType: "soft"` is also supported. |
 | Open | 1x1 tracking pixel | No | Gmail image proxy/caching can pre-fetch or cache the pixel. Treat opens as a signal, not proof. |
 | Read / read receipt | Workspace read-receipt setting, recipient MDN, or webhook | Workspace/recipient-dependent | The Gmail API does not expose read receipts. The app adds standard request headers, but Gmail may ignore them. |
 | Acknowledged | “Confirm receipt” link click | Yes, for the click | Proves someone opened the link, not who or that they read the message. |
@@ -56,6 +56,7 @@ TRACKING_ACK_ENABLED=true
 READ_RECEIPT_REQUESTED=true
 TRACKING_WEBHOOK_SECRET=replace-with-a-long-random-secret
 TRACKING_SYNC_DAYS=7
+TRACKING_SYNC_INTERVAL_MINUTES=30
 ```
 
 Generate a webhook secret:
@@ -73,6 +74,8 @@ Notes:
 - `READ_RECEIPT_REQUESTED=true` adds request headers to outgoing MIME.
 - `TRACKING_WEBHOOK_SECRET` empty disables `/api/tracking/webhook`.
 - `TRACKING_SYNC_DAYS` is the default lookback for Gmail metadata sync, capped at 30 days.
+- `TRACKING_SYNC_INTERVAL_MINUTES` is the automatic sync interval, default `30`. Set `0` to
+  disable automatic sync and use the UI/API only.
 
 ## 4. Apply the database migration
 
@@ -80,8 +83,9 @@ Notes:
 npm run db:migrate
 ```
 
-The migration adds `tracking_id`, denormalized tracking timestamps/counts, and the
-`tracking_events` table. Existing rows are backfilled with a generated `trk_...` ID.
+The migrations add `tracking_id`, denormalized tracking timestamps/counts (including
+`deferred_at`, `last_deferred_at`, and `deferred_count`), and the `tracking_events` table.
+Existing rows are backfilled with a generated `trk_...` ID.
 
 Start the app:
 
@@ -154,23 +158,44 @@ curl -X POST http://127.0.0.1:3000/api/tracking/sync \
   -d '{"days":7}'
 ```
 
+Automatic sync:
+
+- When the API server starts, the scheduler waits 10 seconds, checks for an active mailbox, and
+  runs the sync. It repeats every `TRACKING_SYNC_INTERVAL_MINUTES` minutes (default 30).
+- A run is skipped when no mailbox is connected or a previous run is still in progress.
+- Failures are logged and retried at the next interval; they do not crash the API.
+- Manual **Sync Gmail** / **Sync tracking** and `POST /api/tracking/sync` still work.
+- Set `TRACKING_SYNC_INTERVAL_MINUTES=0` to disable automatic sync.
+
 The sync:
 
 - Uses the existing `gmail.metadata` scope; it does not read message bodies.
-- Searches the inbox for DSN/bounce-like messages and read-receipt-like messages.
+- Scans recent inbox metadata for DSN/bounce-like messages and read-receipt-like messages.
+  The metadata scope does not support the Gmail search `q` parameter, so matching happens
+  locally after listing by label.
 - Matches them to ledger sends by `In-Reply-To`, `References`, `Message-ID`, or Gmail thread.
 - Scans recent threads for replies when a send has a thread ID and no reply yet.
-- Records `BOUNCED`, `DEFERRED`, `READ`, or `REPLIED` events.
+- Records `BOUNCED` (hard/soft/unknown), `DEFERRED` (soft/retrying), `READ`, or `REPLIED`
+  events.
+- Projects deferred evidence into `deferredAt`, `lastDeferredAt`, and `deferredCount` without
+  setting `bouncedAt`.
+- Never downgrades a hard bounce when later soft or unknown evidence arrives.
 - Deduplicates repeated Gmail message IDs.
 
 Limitations:
 
 - A DSN must still be in the mailbox and match a ledger send.
 - The sync cannot read the DSN body, so SMTP status codes and diagnostic text are not captured.
-  The event payload includes `failedRecipients` and a note to open the Gmail message for details.
+  Hard/soft classification uses DSN subject and header text (`Failure`, `Undelivered`,
+  `Delayed`, `temporary`, and similar). The payload includes `bounceType`, `failedRecipients`,
+  and a note to open the Gmail message for SMTP details.
 - A reply in a new thread is not matched.
 - A read receipt that does not reference the original message may not be matched.
-- Gmail search and thread reads consume Gmail API quota.
+- The scan covers the newest 500 inbox messages and stops at the lookback cutoff. An older DSN
+  or a DSN beyond the first 500 messages may be missed.
+- Inbox metadata scans and thread reads consume Gmail API quota.
+- Gmail may rewrite the outgoing `Message-ID`; verification adopts Gmail's actual header and
+  records a `message_id_adopted` event so later checks match.
 
 ## 8. Feed delivered and engagement events from Workspace or an ESP
 
@@ -238,6 +263,12 @@ Allowed `eventType` values:
 DELIVERED, DEFERRED, BOUNCED, OPENED, READ, ACKNOWLEDGED, REPLIED, COMPLAINED
 ```
 
+For bounce events, set `payload.bounceType` to `hard` or `soft`. If it is missing, the app
+infers the type from `payload.smtpStatus`, `payload.status`, or `payload.diagnosticCode`
+(`4xx` = soft, `5xx` = hard). `DEFERRED` increments `deferredAt`, `lastDeferredAt`, and
+`deferredCount`; `BOUNCED` sets `bouncedAt` and `bounceType`, and a hard bounce cannot be
+downgraded later.
+
 Examples:
 
 ```bash
@@ -264,6 +295,18 @@ curl -X POST http://127.0.0.1:3000/api/tracking/webhook \
   }'
 ```
 
+```bash
+curl -X POST http://127.0.0.1:3000/api/tracking/webhook \
+  -H "Content-Type: application/json" \
+  -H "x-tracking-secret: $TRACKING_WEBHOOK_SECRET" \
+  -d '{
+    "trackingId": "trk_REPLACE_ME",
+    "eventType": "DEFERRED",
+    "providerEventId": "esp-deferred-001",
+    "payload": {"bounceType": "soft", "smtpStatus": "450"}
+  }'
+```
+
 Responses:
 
 - `202` with `{ "recorded": true, "sendId": "..." }` when a new event is stored.
@@ -278,8 +321,11 @@ Responses:
 - A bounce is usually a DSN in the sender inbox, not a Gmail API error.
 - Hard bounces should remove or suppress the recipient after review.
 - Soft bounces may be temporary; do not treat every `DEFERRED` event as a permanent failure.
-- The app records `bounceType` from the webhook payload. Gmail metadata sync uses `soft` for a
-  delayed-mail subject and `unknown` otherwise because it cannot read the DSN body.
+- The app records `bounceType` from the webhook payload (`hard`, `soft`, or inferred from a
+  `4xx`/`5xx` SMTP status). Gmail metadata sync classifies delayed/temporary subjects as `soft`
+  and failure/undelivered subjects as `hard`; anything else with `X-Failed-Recipients` becomes
+  `hard`, otherwise `unknown`.
+- Once a send is marked hard, later soft/unknown evidence cannot downgrade it.
 - Publish SPF, DKIM, and DMARC for the sending domain.
 - Use Google Postmaster Tools for domain reputation, authentication, and spam-rate signals.
 - Warm up new domains/mailboxes and keep complaint rates low.
@@ -292,7 +338,11 @@ Responses:
 - [ ] Clicking the acknowledgement link records `ACKNOWLEDGED`.
 - [ ] The open endpoint returns a GIF and records `OPENED` when requested.
 - [ ] Gmail metadata sync runs without a scope error.
-- [ ] A test DSN is detected as `BOUNCED` or `DEFERRED`.
+- [ ] A failure DSN is detected as `BOUNCED` with `bounceType: "hard"`.
+- [ ] A delayed DSN is detected as `DEFERRED` with `deferredAt`, `lastDeferredAt`, and
+  `deferredCount`.
+- [ ] A later hard bounce upgrades a soft/unknown bounce and is never downgraded.
+- [ ] Dashboard shows hard, soft, and deferred counts.
 - [ ] A reply in the same thread is detected as `REPLIED`.
 - [ ] A webhook with the correct secret records `DELIVERED`.
 - [ ] A repeated webhook with the same `providerEventId` is a duplicate, not a second event.
@@ -333,6 +383,72 @@ Responses:
 - Read receipts are Workspace-only and are not exposed through the Gmail API.
 - Gmail’s image proxy can make opens unreliable.
 - Gmail metadata sync cannot read DSN or MDN bodies.
-- There is no background scheduler yet; sync is manual via the UI or API.
+- Automatic sync imports Gmail DSN/MDN/reply evidence on an interval; delivery events still
+  require a Workspace/BigQuery bridge or an ESP webhook.
 - A recipient can forward the message or click the acknowledgement link from a shared inbox;
   the event proves the link was opened, not who opened it.
+
+## 14. Status and test matrix
+
+A real test email can exercise some states, but not all. Gmail proves acceptance and, through
+DSN metadata, some failures; delivery, read, and complaints need another source. Use the
+webhook or `TrackingService` fakes to test every state deterministically.
+
+### Send ledger statuses
+
+| Status | Meaning | Live email test | Deterministic test |
+| --- | --- | --- | --- |
+| `SENDING` | Request started; provider result not stored yet | Brief transient state, hard to observe | Integration test with a blocked provider promise |
+| `SENT` | Gmail accepted the message and returned a message ID; SENT label pending verification | Yes | Fake provider returning a message ID |
+| `VERIFIED` | Metadata read confirmed the Gmail `SENT` label and adopted `Message-ID` | Yes | Fake provider + metadata |
+| `FAILED` | Validation or provider failure; no false SENT state | Yes, using an invalid recipient or forced API error; do not abuse | Fake provider rejection |
+
+### Tracking states
+
+| State | Evidence | Live email test | Deterministic test |
+| --- | --- | --- | --- |
+| `OPENED` | 1x1 pixel hit | Yes, if the recipient loads remote images; Gmail may proxy/cache | `GET /t/open/:trackingId` or integration test |
+| `ACKNOWLEDGED` | Acknowledgement link click | Yes, open the link | `GET /t/ack/:trackingId` |
+| `REPLIED` | Reply in the same Gmail thread | Yes, reply from the recipient mailbox | Fake Gmail thread metadata |
+| `READ` | MDN/read-receipt message or webhook | Workspace/recipient-dependent; not reliable on personal Gmail | Webhook `READ` or fake inbox MDN |
+| `DELIVERED` | Workspace/BigQuery logs or ESP webhook | Not proven by the Gmail API | Webhook `DELIVERED` |
+| `DEFERRED` | Delayed/temporary DSN or webhook with `4xx`/soft | Possible with a temporary-failure server; not reliable | Webhook `DEFERRED` or fake DSN |
+| `BOUNCED` hard | Failure DSN, `5xx`, or webhook `bounceType: hard` | Yes, send to a nonexistent domain | Webhook `BOUNCED` with `bounceType: hard` |
+| `BOUNCED` soft | Soft bounce DSN/webhook | Hard to force reliably | Webhook `BOUNCED` with `bounceType: soft` or `4xx` |
+| `COMPLAINED` | ESP feedback loop/webhook | Cannot be generated through the Gmail API | Webhook `COMPLAINED` |
+
+### UI badge reference
+
+Send status badges come from `email_sends.status`; tracking badges come from tracking events and
+the denormalized tracking columns on the send.
+
+| Badge | Source | Meaning |
+| --- | --- | --- |
+| `Sending` | send status `SENDING` | Request started; provider result not stored yet |
+| `Sent` | send status `SENT` | Gmail accepted the message and returned a message ID |
+| `Verified` | send status `VERIFIED` | Gmail `SENT` copy re-read and matched |
+| `Failed` | send status `FAILED` | Send failed; see `errorCode`/`errorMessage` |
+| `Delivered` | `DELIVERED` event | Accepted by the recipient server; webhook/Workspace evidence only |
+| `Deferred` / `Deferred Nx` | `DEFERRED` event | Transient 4xx failure; increments `deferredCount`, does not set `bouncedAt` |
+| `Soft bounce` | `BOUNCED` event with `bounceType: soft` | Temporary failure recorded as a bounce; sets `bouncedAt` |
+| `Bounced` | `BOUNCED` event with `bounceType: unknown` | Bounce with no hard/soft classification |
+| `Hard bounce` | `BOUNCED` event with `bounceType: hard` | Permanent failure; cannot be downgraded later |
+| `Opened` / `Opened Nx` | `OPENED` event | 1x1 pixel loaded; increments `openCount` |
+| `Read` | `READ` event | MDN/read-receipt message or webhook |
+| `Ack` | `ACKNOWLEDGED` event | Recipient clicked the acknowledgement link |
+| `Replied` | `REPLIED` event | Reply detected in the same Gmail thread |
+| `Complaint` | `COMPLAINED` event | Spam complaint via ESP feedback loop webhook |
+| `—` | no tracking evidence | Nothing recorded yet |
+
+Bounce types are `hard`, `soft`, or `unknown`. Gmail metadata sync turns a delay DSN into
+`DEFERRED` (badge `Deferred`); the `Soft bounce` badge requires a `BOUNCED` event with
+`bounceType: soft`, normally from the webhook.
+
+Rules:
+
+- A later hard bounce upgrades soft/unknown evidence; a hard bounce is never downgraded.
+- `DEFERRED` increments `deferredCount` and does not set `bouncedAt`.
+- A complaint and a delivery event are claims from the source; keep `source` and `payload`
+  for audit.
+- The webhook accepts any supported event type with `x-tracking-secret`; use a stable
+  `providerEventId` so retries deduplicate.

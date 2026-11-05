@@ -18,6 +18,7 @@ import { CredentialService } from '../services/credential-service';
 import { TokenCipher } from '../services/crypto';
 import type { ProviderResolver } from '../services/provider-resolver';
 import { SendService } from '../services/send-service';
+import { startTrackingSyncScheduler } from '../services/tracking-scheduler';
 import { TrackingService } from '../services/tracking-service';
 import { VerificationService } from '../services/verification-service';
 import type { AppContext } from './context';
@@ -34,6 +35,8 @@ export interface BuildAppOptions {
   db: Database;
   resolveProvider?: ProviderResolver;
   resolveTrackingProvider?: TrackingProviderResolver;
+  autoConnectGmail?: boolean;
+  autoSyncTracking?: boolean;
   logger?: FastifyServerOptions['logger'];
 }
 
@@ -116,6 +119,91 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   await app.register(cookie, { secret: config.cookieSecret });
   app.setErrorHandler(errorHandler);
+
+  const autoConnectToken = options.autoConnectGmail ? config.googleRefreshToken : '';
+  let autoConnectPromise: Promise<void> | null = null;
+  let autoConnectRetryAt = 0;
+
+  async function ensureAutoConnection(): Promise<void> {
+    if (!autoConnectToken) {
+      return;
+    }
+    if (!config.googleConfigured) {
+      return;
+    }
+    if (await credentials.getActiveMailbox()) {
+      return;
+    }
+    if (autoConnectPromise) {
+      return autoConnectPromise;
+    }
+    if (Date.now() < autoConnectRetryAt) {
+      return;
+    }
+
+    autoConnectPromise = credentials
+      .ensureConnectionFromRefreshToken(autoConnectToken)
+      .then((connection) => {
+        app.log.info(
+          { email: connection.mailbox.email },
+          'Gmail auto-connected from GOOGLE_REFRESH_TOKEN',
+        );
+      })
+      .catch((error) => {
+        autoConnectRetryAt = Date.now() + 30_000;
+        app.log.error({ err: error }, 'Gmail auto-connect from GOOGLE_REFRESH_TOKEN failed');
+      })
+      .finally(() => {
+        autoConnectPromise = null;
+      });
+
+    return autoConnectPromise;
+  }
+
+  if (autoConnectToken && !config.googleConfigured) {
+    app.log.error(
+      'GOOGLE_REFRESH_TOKEN is set but GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is missing',
+    );
+  }
+
+  await ensureAutoConnection();
+
+  app.addHook('preHandler', async (request) => {
+    if (!request.url.startsWith('/api/') || request.url.startsWith('/api/health')) {
+      return;
+    }
+    await ensureAutoConnection();
+  });
+
+  if (
+    options.autoSyncTracking &&
+    config.trackingEnabled &&
+    config.trackingSyncIntervalMinutes > 0
+  ) {
+    app.log.info(
+      { intervalMinutes: config.trackingSyncIntervalMinutes },
+      'Gmail tracking auto-sync enabled',
+    );
+    const stopTrackingSync = startTrackingSyncScheduler({
+      intervalMs: config.trackingSyncIntervalMinutes * 60_000,
+      initialDelayMs: 10_000,
+      run: async () => {
+        if (!(await credentials.getActiveMailbox())) {
+          return;
+        }
+        const result = await trackingService.sync(config.trackingSyncDays);
+        if (result.events > 0 || result.errors > 0) {
+          app.log.info(result, 'Scheduled Gmail tracking sync completed');
+        }
+      },
+      onError: (error) => {
+        app.log.warn({ err: error }, 'Scheduled Gmail tracking sync failed');
+      },
+    });
+    app.addHook('onClose', async () => {
+      stopTrackingSync();
+    });
+  }
 
   registerHealthRoutes(app, ctx);
   registerAuthRoutes(app, ctx);

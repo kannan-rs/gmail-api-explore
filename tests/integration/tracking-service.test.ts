@@ -204,6 +204,78 @@ describe('TrackingService', () => {
     expect(updated?.bounceType).toBe('hard');
   });
 
+  it('projects deferred events without marking the send bounced', async () => {
+    const send = await createSend();
+    const first = await service.recordWebhook({
+      trackingId: send.trackingId,
+      eventType: 'DEFERRED',
+      providerEventId: 'evt-deferred-1',
+      payload: { bounceType: 'soft' },
+    });
+    const second = await service.recordWebhook({
+      trackingId: send.trackingId,
+      eventType: 'DEFERRED',
+      providerEventId: 'evt-deferred-2',
+      payload: { bounceType: 'soft' },
+    });
+
+    expect(first.recorded).toBe(true);
+    expect(second.recorded).toBe(true);
+    const updated = await sends.findById(send.id);
+    expect(updated?.deferredAt).not.toBeNull();
+    expect(updated?.lastDeferredAt).not.toBeNull();
+    expect(updated?.deferredCount).toBe(2);
+    expect(updated?.bouncedAt).toBeNull();
+    expect(await sends.summary()).toMatchObject({ deferred: 1, bounced: 0 });
+  });
+
+  it('keeps a hard bounce when later soft or unknown evidence arrives', async () => {
+    const send = await createSend();
+    await service.recordWebhook({
+      trackingId: send.trackingId,
+      eventType: 'BOUNCED',
+      providerEventId: 'evt-soft',
+      payload: { bounceType: 'soft' },
+    });
+    await service.recordWebhook({
+      trackingId: send.trackingId,
+      eventType: 'BOUNCED',
+      providerEventId: 'evt-hard',
+      payload: { bounceType: 'hard' },
+    });
+    await service.recordWebhook({
+      trackingId: send.trackingId,
+      eventType: 'BOUNCED',
+      providerEventId: 'evt-unknown',
+      payload: { smtpStatus: '450' },
+    });
+
+    expect((await sends.findById(send.id))?.bounceType).toBe('hard');
+    expect(await sends.summary()).toMatchObject({
+      bounced: 1,
+      hardBounced: 1,
+      softBounced: 0,
+    });
+  });
+
+  it('upgrades a soft bounce when hard evidence arrives', async () => {
+    const send = await createSend();
+    await service.recordWebhook({
+      trackingId: send.trackingId,
+      eventType: 'BOUNCED',
+      providerEventId: 'evt-soft-first',
+      payload: { bounceType: 'soft' },
+    });
+    await service.recordWebhook({
+      trackingId: send.trackingId,
+      eventType: 'BOUNCED',
+      providerEventId: 'evt-hard-next',
+      payload: { smtpStatus: '550' },
+    });
+
+    expect((await sends.findById(send.id))?.bounceType).toBe('hard');
+  });
+
   it('returns send_not_found for an unmatched webhook', async () => {
     const result = await service.recordWebhook({
       trackingId: 'trk_missing',

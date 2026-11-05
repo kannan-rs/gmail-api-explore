@@ -49,7 +49,12 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-function mockFetch(options: { connected: boolean; configured?: boolean; sendResult?: unknown }) {
+function mockFetch(options: {
+  connected: boolean;
+  configured?: boolean;
+  autoConnect?: boolean;
+  sendResult?: unknown;
+}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
 
@@ -57,6 +62,7 @@ function mockFetch(options: { connected: boolean; configured?: boolean; sendResu
       return json({
         configured: options.configured ?? true,
         connected: options.connected,
+        autoConnect: options.autoConnect ?? false,
         mailbox: options.connected ? mailbox : null,
       });
     }
@@ -164,6 +170,16 @@ describe('App', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Send via Gmail' }));
 
     expect(await screen.findByText('At least one recipient is required.')).toBeTruthy();
+  });
+
+  it('shows the auto-connected mailbox without a Connect or Disconnect button', async () => {
+    mockFetch({ connected: true, autoConnect: true });
+    render(<App />);
+
+    expect(await screen.findByText('owner@example.com')).toBeTruthy();
+    expect(screen.getByText('Auto-connected from GOOGLE_REFRESH_TOKEN')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Connect Gmail' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull();
   });
 
   it('shows the connect prompt when Gmail is not connected', async () => {

@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import type { Database } from '../db/client';
 import { type EmailSendRow, emailSends, type TrackingEventRow, trackingEvents } from '../db/schema';
-import type { TrackingEventType, TrackingSource } from '../domain/tracking';
+import { resolveBounceType, type TrackingEventType, type TrackingSource } from '../domain/tracking';
 
 export interface RecordTrackingEventInput {
   sendId: string;
@@ -85,16 +85,18 @@ export class TrackingRepository {
       case 'DELIVERED':
         patch = { ...base, deliveredAt: sql`coalesce(${emailSends.deliveredAt}, ${occurredAt})` };
         break;
-      case 'BOUNCED':
+      case 'BOUNCED': {
+        const bounceType = resolveBounceType(payload);
         patch = {
           ...base,
           bouncedAt: sql`coalesce(${emailSends.bouncedAt}, ${occurredAt})`,
           bounceType:
-            typeof payload.bounceType === 'string' && payload.bounceType.length > 0
-              ? payload.bounceType
-              : 'unknown',
+            bounceType === 'hard'
+              ? sql`'hard'`
+              : sql`case when ${emailSends.bounceType} = 'hard' then 'hard' else ${bounceType} end`,
         };
         break;
+      }
       case 'OPENED':
         patch = {
           ...base,
@@ -119,6 +121,12 @@ export class TrackingRepository {
         patch = { ...base, complainedAt: sql`coalesce(${emailSends.complainedAt}, ${occurredAt})` };
         break;
       case 'DEFERRED':
+        patch = {
+          ...base,
+          deferredAt: sql`coalesce(${emailSends.deferredAt}, ${occurredAt})`,
+          lastDeferredAt: occurredAt,
+          deferredCount: sql`${emailSends.deferredCount} + 1`,
+        };
         break;
     }
 

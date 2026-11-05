@@ -4,6 +4,9 @@ type TrackingBadgeSend = Pick<
   SendRow,
   | 'deliveredAt'
   | 'bouncedAt'
+  | 'bounceType'
+  | 'deferredAt'
+  | 'deferredCount'
   | 'openedAt'
   | 'openCount'
   | 'readAt'
@@ -22,8 +25,26 @@ export function TrackingBadges({ send }: { send: TrackingBadgeSend }) {
   if (send.deliveredAt) {
     badges.push({ label: 'Delivered', tone: 'delivered' });
   }
+  if (send.deferredAt) {
+    badges.push({
+      label: send.deferredCount > 1 ? `Deferred ${send.deferredCount}x` : 'Deferred',
+      tone: 'deferred',
+    });
+  }
   if (send.bouncedAt) {
-    badges.push({ label: 'Bounced', tone: 'bounced' });
+    const label =
+      send.bounceType === 'hard'
+        ? 'Hard bounce'
+        : send.bounceType === 'soft'
+          ? 'Soft bounce'
+          : 'Bounced';
+    const tone =
+      send.bounceType === 'hard'
+        ? 'hard-bounce'
+        : send.bounceType === 'soft'
+          ? 'soft-bounce'
+          : 'bounced';
+    badges.push({ label, tone });
   }
   if (send.openedAt) {
     badges.push({

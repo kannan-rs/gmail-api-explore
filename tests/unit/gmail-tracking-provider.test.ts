@@ -24,8 +24,11 @@ class FakeGmailApi implements GmailApi {
     return message;
   }
 
-  async listMessages(): Promise<GmailMessageRef[]> {
-    return this.listed;
+  async listMessagesByLabel(): Promise<{
+    messages: GmailMessageRef[];
+    nextPageToken: string | null;
+  }> {
+    return { messages: this.listed, nextPageToken: null };
   }
 
   async getThreadMetadata(threadId: string): Promise<GmailMessageMetadata[]> {
@@ -90,6 +93,7 @@ describe('GmailTrackingProvider', () => {
       providerEventId: 'dsn-1',
     });
     expect(events[0]?.payload.failedRecipients).toEqual(['borrower@example.com']);
+    expect(events[0]?.payload.bounceType).toBe('hard');
   });
 
   it('falls back to X-Failed-Recipients when the DSN has no reference header', async () => {
@@ -114,6 +118,31 @@ describe('GmailTrackingProvider', () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]?.eventType).toBe('BOUNCED');
+    expect(events[0]?.payload.bounceType).toBe('hard');
+  });
+
+  it('treats an unclassified DSN with a failed recipient as a hard bounce', async () => {
+    const api = new FakeGmailApi();
+    api.listed = [{ id: 'dsn-5', threadId: null }];
+    api.messages.set(
+      'dsn-5',
+      metadata('dsn-5', {
+        from: 'mailer-daemon@googlemail.com',
+        subject: 'Delivery Status Notification',
+        date: 'Mon, 02 Nov 2026 10:00:00 +0000',
+        'x-failed-recipients': 'borrower@example.com',
+      }),
+    );
+
+    const provider = new GmailTrackingProvider(api);
+    const events = await provider.collectEvents({
+      mailboxEmail: 'owner@example.com',
+      days: 7,
+      sends: [sendRef()],
+    });
+
+    expect(events[0]?.eventType).toBe('BOUNCED');
+    expect(events[0]?.payload.bounceType).toBe('hard');
   });
 
   it('records delayed mail as a soft deferred event', async () => {
@@ -164,6 +193,32 @@ describe('GmailTrackingProvider', () => {
     expect(events[0]).toMatchObject({
       eventType: 'READ',
       source: 'gmail_mdn',
+    });
+  });
+
+  it('matches a read-receipt subject prefix', async () => {
+    const api = new FakeGmailApi();
+    api.listed = [{ id: 'mdn-2', threadId: null }];
+    api.messages.set(
+      'mdn-2',
+      metadata('mdn-2', {
+        from: 'borrower@example.com',
+        subject: 'Read receipt: Loan statement',
+        date: 'Mon, 02 Nov 2026 10:00:00 +0000',
+      }),
+    );
+
+    const provider = new GmailTrackingProvider(api);
+    const events = await provider.collectEvents({
+      mailboxEmail: 'owner@example.com',
+      days: 7,
+      sends: [sendRef()],
+    });
+
+    expect(events[0]).toMatchObject({
+      eventType: 'READ',
+      source: 'gmail_mdn',
+      providerEventId: 'mdn-2',
     });
   });
 

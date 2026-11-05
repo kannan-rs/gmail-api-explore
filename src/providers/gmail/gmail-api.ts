@@ -14,6 +14,11 @@ export interface GmailMessageRef {
   threadId: string | null;
 }
 
+export interface GmailMessagePage {
+  messages: GmailMessageRef[];
+  nextPageToken: string | null;
+}
+
 export interface GmailApi {
   sendRaw(rawBase64Url: string): Promise<{
     id: string;
@@ -21,7 +26,11 @@ export interface GmailApi {
     labelIds: string[];
   }>;
   getMessageMetadata(messageId: string): Promise<GmailMessageMetadata>;
-  listMessages(query: string, maxResults: number): Promise<GmailMessageRef[]>;
+  listMessagesByLabel(
+    labelIds: string[],
+    maxResults: number,
+    pageToken?: string,
+  ): Promise<GmailMessagePage>;
   getThreadMetadata?(threadId: string): Promise<GmailMessageMetadata[]>;
 }
 
@@ -264,26 +273,34 @@ export class GoogleGmailApi implements GmailApi {
     }
   }
 
-  async listMessages(query: string, maxResults: number): Promise<GmailMessageRef[]> {
+  async listMessagesByLabel(
+    labelIds: string[],
+    maxResults: number,
+    pageToken?: string,
+  ): Promise<GmailMessagePage> {
     try {
       const response = await withTimeout(
         this.gmail.users.messages.list({
           userId: 'me',
-          q: query,
+          labelIds,
           maxResults,
+          ...(pageToken ? { pageToken } : {}),
         }),
         this.timeoutMs,
-        'Gmail message search',
+        'Gmail message list',
       );
 
-      return (response.data.messages ?? [])
-        .filter((message): message is { id: string; threadId?: string | null } =>
-          Boolean(message.id),
-        )
-        .map((message) => ({
-          id: message.id,
-          threadId: message.threadId ?? null,
-        }));
+      return {
+        messages: (response.data.messages ?? [])
+          .filter((message): message is { id: string; threadId?: string | null } =>
+            Boolean(message.id),
+          )
+          .map((message) => ({
+            id: message.id,
+            threadId: message.threadId ?? null,
+          })),
+        nextPageToken: response.data.nextPageToken ?? null,
+      };
     } catch (error) {
       throw mapGmailError(error);
     }

@@ -8,6 +8,7 @@
       "web/**/*.css",
       "tests/**/*.ts",
       "tests/**/*.tsx",
+      "scripts/**/*.ts",
       "*.ts",
       "*.json",
       "!package-lock.json"

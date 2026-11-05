@@ -34,7 +34,8 @@ That Sent copy is the audit evidence, so V1 accepts it rather than deleting it.
 - One connected mailbox at a time in local V1. The schema already allows multiple mailboxes.
 - No application login in local V1; bind to `127.0.0.1`. AWS requires real app auth.
 - HTML and plain-text bodies are supported. The original V1 had no tracking; an optional
-  tracking layer was added later. See [EMAIL_TRACKING_SETUP.md](EMAIL_TRACKING_SETUP.md).
+  tracking layer was added later. See [EMAIL_TRACKING_SETUP.md](EMAIL_TRACKING_SETUP.md) and
+  the maintained delivery checklist in [TRACKING_PLAN.md](TRACKING_PLAN.md).
 - Default daily cap: 100 messages, configurable. This is deliberately below consumer Gmail
   limits to avoid account suspension during experimentation.
 
@@ -199,8 +200,8 @@ webhooks.
 5. The UI shows a Gmail deep link:
    `https://mail.google.com/mail/?authuser=<mailbox>#sent/<messageId>`.
 6. Reconciliation reads recent `SENT`/`SENDING` records and checks Gmail. A send that
-   actually succeeded but lost its HTTP response is recovered by searching
-   `rfc822msgid:<message-id>`.
+   actually succeeded but lost its HTTP response is recovered by scanning recent `SENT`
+   metadata for the stored `Message-ID` (the `gmail.metadata` scope does not support `q`).
 
 **What this proves:** Gmail accepted the message for delivery and placed it in the account's
 Sent folder. The recipient's copy is the evidence for Gmail relay/authentication headers.
@@ -249,9 +250,9 @@ export audit evidence. This keeps future Gmail work consistent.
 | 4 | Fastify API and error mapping | Done |
 | 5 | React UI: connect, compose, sends, dashboard, export | Done |
 | 6 | Unit/integration/UI tests, typecheck, lint | Done |
-| 7 | Live Gmail send + Sent verification | Blocked on user OAuth credentials; live smoke test is ready |
+| 7 | Live Gmail send + Sent verification | Done; live smoke test passed against the connected mailbox |
 | 8 | README, OAuth guide, opencode skill, AWS blueprint | Done |
-| Post-V1 | Tracking ID, pixel/ack, Gmail metadata sync, webhook ingestion | Done |
+| Post-V1 | Tracking ID, pixel/ack, Gmail metadata sync, webhook ingestion | Done; hard/soft bounce plan in `TRACKING_PLAN.md` |
 | Future | Workspace DWD, multi-mailbox, app auth, AWS deployment, delivery-event bridge | Out of V1 |
 
 ## 9. Testing criteria
@@ -274,8 +275,8 @@ export audit evidence. This keeps future Gmail work consistent.
      returned and Gmail is not called twice.
 5. **Timeout recovery**
    - Given Gmail sent the message but the client lost the response, when the same key is
-     retried, then the service finds the message by `rfc822msgid`, marks it `SENT`, and does
-     not create a duplicate.
+     retried, then the service scans recent `SENT` metadata for the stored `Message-ID`,
+     marks it `SENT`, and does not create a duplicate.
 6. **Failure handling**
    - Given Gmail returns 401/403/429/5xx, then the record is `FAILED` with a safe error code
      and message; the UI shows the failure; no false `SENT` state is written.
